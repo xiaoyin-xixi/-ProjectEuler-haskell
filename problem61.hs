@@ -10,7 +10,6 @@ problem61 = find (\cs -> macth2Digit (snd $ last cs) (snd $ head cs)) $ filter (
     where
         loop [] = []
         loop (x:xs) = search [] x ++ loop xs
-        isCyclical xs = filter (\cs -> length cs == 6) xs
 
 search :: [(Int, Int)] -> (Int, Int) -> [[(Int, Int)]]
 search t p@(n,m)

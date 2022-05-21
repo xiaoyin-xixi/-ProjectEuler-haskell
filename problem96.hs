@@ -4,7 +4,6 @@ import Control.Monad
 import Control.Monad.ST
 import Data.List
 import Data.STRef
-import Debug.Trace
 import GHC.Arr
 
 main :: IO ()
@@ -25,25 +24,23 @@ problem96 sudokList = runSTArray $ do
     cDecidedArr <- newListArray (1, 9) (repeat [])
     rDecidedArr <- newListArray (1, 9) (repeat [])
     sDecidedArr <- newListArray (1, 9) (repeat [])
-    refque <- newSTRef sudokList
-    que <- readSTRef refque
-    setDecidedList cDecidedArr rDecidedArr sDecidedArr candidateArr que
-    setCandidate cDecidedArr rDecidedArr sDecidedArr candidateArr
-    setCandidate' cDecidedArr rDecidedArr sDecidedArr candidateArr
-    setCandidate'' cDecidedArr rDecidedArr sDecidedArr candidateArr
+    setDecidedList cDecidedArr rDecidedArr sDecidedArr candidateArr sudokList
+    update cDecidedArr rDecidedArr sDecidedArr candidateArr
     cl <- getCandidateList candidateArr
     cArr' <- freeze cDecidedArr
     rArr' <- freeze rDecidedArr
     sArr' <- freeze sDecidedArr
     canArr' <- freeze candidateArr
---    trace ("initial:"++ show cl) $ pure ()
     let res = solver cArr' rArr' sArr' canArr' cl
     thawSTArray res
     where
-        check :: STArray s Int [Int] -> ST s Bool
-        check canArr = do 
+        checkFailure :: STArray s Int [Int] -> ST s Bool
+        checkFailure canArr = do 
             list <- getElems canArr
             return $ any null list
+        isTerminate canArr = do
+            list <- getCandidateList canArr
+            return (length list == 9)
         getCandidateList :: STArray s Int [Int] -> ST s [((Int, Int), Int)]
         getCandidateList canArr = do
             minRef <- newSTRef ((1,1),[1,2,3,4,5,6,7,8,9])
@@ -62,28 +59,22 @@ problem96 sudokList = runSTArray $ do
         solver :: Array Int [Int] -> Array Int [Int] -> Array Int [Int] -> Array Int [Int] -> [((Int, Int), Int)] -> Array Int [Int]
         solver cArr rArr sArr canArr [] = canArr
         solver cArr rArr sArr canArr (c:cs) = runST $ do
---            trace (show canArr) $ pure ()
             resRef <- newSTRef canArr
             cST <- thaw cArr
             rST <- thaw rArr
             sST <- thaw sArr
             canST <- thaw canArr
-            cList <- getCandidateList canST
-            when (length cList<9) $ do
+            isTerm <- isTerminate canST
+            unless isTerm $ do
                 setDecidedList cST rST sST canST [c]
-                failure <- check canST
-                unless failure $ do
-                    setCandidate cST rST sST canST
-                    setCandidate' cST rST sST canST
-                    setCandidate'' cST rST sST canST
-                failure <- check canST
+                failure <- checkFailure canST
+                unless failure $ update cST rST sST canST
+                failure <- checkFailure canST
                 if failure then do
---                    trace ("failure:"++ show cs) $ pure ()
                     let res = solver cArr rArr sArr canArr cs
                     modifySTRef' resRef (const res)
                 else do
                     cl <- getCandidateList canST
---                    trace ("success:"++ show cl) $ pure ()
                     if length cl<9 then do
                         cArr' <- freeze cST
                         rArr' <- freeze rST
@@ -92,9 +83,8 @@ problem96 sudokList = runSTArray $ do
                         let res = solver cArr' rArr' sArr' canArr' cl
                         modifySTRef' resRef (const res)
                         resArr <- thaw res
-                        cl' <- getCandidateList resArr 
-                        when (length cl'<9) $ do
---                            trace ("repeat:"++ show cs) $ pure ()
+                        isTerm <- isTerminate resArr 
+                        unless isTerm $ do
                             let res = solver cArr rArr sArr canArr cs
                             modifySTRef' resRef (const res)
                     else do
@@ -139,93 +129,37 @@ problem96 sudokList = runSTArray $ do
                         writeArray canArr (9*(y-1) + x) v'
             r <- readSTRef refdeciding
             unless (null r) $ do setDecidedList cArr rArr sArr canArr r
-        setCandidate :: STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> ST s ()
-        setCandidate cArr rArr sArr canArr = do
+        update :: STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> ST s ()
+        update cArr rArr sArr canArr = do
+            setDecidedList cArr rArr sArr canArr =<< chooseCandidatesFromSquareInfo canArr
+            setDecidedList cArr rArr sArr canArr =<< chooseCandidatesFromColumnInfo canArr
+            setDecidedList cArr rArr sArr canArr =<< chooseCandidatesFromRowInfo canArr
+        chooseCandidatesFromSquareInfo :: STArray s Int [Int] -> ST s [((Int, Int), Int)]
+        chooseCandidatesFromSquareInfo canArr = getCandidates canArr [1,2,3,10,11,12,19,20,21] [0,3,6,27,30,33,54,57,60]
+        chooseCandidatesFromRowInfo :: STArray s Int [Int] -> ST s [((Int, Int), Int)]
+        chooseCandidatesFromRowInfo canArr = getCandidates canArr [1,2,3,4,5,6,7,8,9] [0,9,18,27,36,45,54,63,72]
+        chooseCandidatesFromColumnInfo :: STArray s Int [Int] -> ST s [((Int, Int), Int)]
+        chooseCandidatesFromColumnInfo canArr = getCandidates canArr [1,10,19,28,37,46,55,64,73] [0,1,2,3,4,5,6,7,8]
+        getCandidates :: STArray s Int [Int] -> [Int] -> [Int] -> ST s [((Int, Int), Int)]
+        getCandidates canArr ns ms = do
             refdeciding <- newSTRef []
-            forM_ [1..9] $ \n -> do
-                refs <- setsCandidate canArr n
-                s <- readSTRef refs
-                modifySTRef' refdeciding (s++)
-            q <- readSTRef refdeciding
-            unless (null q) $ setDecidedList cArr rArr sArr canArr q
-        setCandidate' :: STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> ST s ()
-        setCandidate' cArr rArr sArr canArr = do
-            refdeciding <- newSTRef []
-            forM_ [1..9] $ \n -> do
-                refs <- setcCandidate canArr n
-                s <- readSTRef refs
-                modifySTRef' refdeciding (s++)
-            q <- readSTRef refdeciding
-            unless (null q) $ setDecidedList cArr rArr sArr canArr q
-        setCandidate'' :: STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> STArray s Int [Int] -> ST s ()
-        setCandidate'' cArr rArr sArr canArr = do
-            refdeciding <- newSTRef []
-            forM_ [1..9] $ \n -> do
-                refs <- setrCandidate canArr n
-                s <- readSTRef refs
-                modifySTRef' refdeciding (s++)
-            q <- readSTRef refdeciding
-            unless (null q) $ setDecidedList cArr rArr sArr canArr q
-
-        setsCandidate :: STArray s Int [Int] ->  Int -> ST s (STRef s [((Int, Int), Int)])
-        setsCandidate canArr n = do
-            refdeciding <- newSTRef []
-            refque <- newSTRef []
-            forM_ [1..3] $ \i -> do
-                let x = ((n-1)`mod`3) * 3 + i
-                forM_ [1..3] $ \j -> do
-                    let y = ((n-1)`div`3) * 3 + j
-                    v <- readArray canArr (9*(y-1) + x)
+            forM_ ms $ \m -> do
+                refque <- newSTRef []
+                forM_ ns $ \n -> do
+                    let p = m + n
+                    v <- readArray canArr p
                     when (length v /= 1) $ modifySTRef' refque (v++)
-            que <- readSTRef refque
-            let a = concat $ filter (\l -> length l == 1) $ group $ sort que
-            unless (null a) $ do
-                forM_ a $ \q -> do
-                    forM_ [1..3] $ \i -> do
-                        let x = ((n-1)`mod`3) * 3 + i
-                        forM_ [1..3] $ \j -> do
-                            let y = ((n-1)`div`3) * 3 + j
-                            v <- readArray canArr (9*(y-1) + x)
-                            when (q `elem` v) $ do
-                                modifySTRef' refdeciding (\l -> ((x,y),q):l)
-                                writeArray canArr (9*(y-1) + x) [q]
-            return refdeciding
-        setcCandidate :: STArray s Int [Int] -> Int -> ST s (STRef s [((Int, Int), Int)])
-        setcCandidate canArr n = do
-            refdeciding <- newSTRef []
-            refque <- newSTRef []
-            let x = n
-            forM_ [1..9] $ \y -> do
-                v <- readArray canArr (9*(y-1) + x)
-                when (length v /= 1) $ modifySTRef' refque (v++)
-            que <- readSTRef refque
-            let a = concat $ filter (\l -> length l == 1) $ group $ sort que
-            unless (null a) $ do
-                forM_ a $ \q -> do
-                    forM_ [1..9] $ \y -> do
-                        v <- readArray canArr (9*(y-1) + x)
-                        when (q `elem` v) $ do
-                            modifySTRef' refdeciding (\l -> ((x,y),q):l)
-                            writeArray canArr (9*(y-1) + x) [q]
-            return refdeciding
-        setrCandidate :: STArray s Int [Int] -> Int -> ST s (STRef s [((Int, Int), Int)])
-        setrCandidate canArr n = do
-            refdeciding <- newSTRef []
-            refque <- newSTRef []
-            let y = n
-            forM_ [1..9] $ \x -> do
-                v <- readArray canArr (9*(y-1) + x)
-                when (length v /= 1) $ modifySTRef' refque (v++)
-            que <- readSTRef refque
-            let a = concat $ filter (\l -> length l == 1) $ group $ sort que
-            unless (null a) $ do
-                forM_ a $ \q -> do
-                    forM_ [1..9] $ \x -> do
-                        v <- readArray canArr (9*(y-1) + x)
-                        when (q `elem` v) $ do
-                            modifySTRef' refdeciding (\l -> ((x,y),q):l)
-                            writeArray canArr (9*(y-1) + x) [q]
-            return refdeciding
+                que <- readSTRef refque
+                let a = concat $ filter (\l -> length l == 1) $ group $ sort que
+                unless (null a) $ do
+                    forM_ a $ \q -> do
+                        forM_ ns $ \n -> do
+                            let p = m + n
+                                x = (p-1) `mod` 9 + 1
+                                y = (p-1) `div` 9 + 1
+                            v <- readArray canArr p
+                            when (q `elem` v) $ modifySTRef' refdeciding (\l -> ((x,y),q):l)
+            readSTRef refdeciding
 
 readSudokuList :: IO [[((Int, Int), Int)]]
 readSudokuList = do
